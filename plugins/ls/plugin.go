@@ -5,12 +5,13 @@ package ls
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/spf13/pflag"
 
 	"mycli/pkg/plugin"
 )
@@ -46,7 +47,7 @@ func (p *lsPlugin) Name() string { return "ls" }
 
 func (p *lsPlugin) IsEnabled() bool { return p.enabled }
 
-func (p *lsPlugin) RegisterFlags(fs *flag.FlagSet) {
+func (p *lsPlugin) RegisterFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&p.enabled, "ls", false, "enable the ls tool (list directory contents as a tree)")
 	fs.Var(&p.rootDirs, "ls-root", "directory the ls tool may list (repeatable; default: current directory)")
 }
@@ -205,6 +206,7 @@ type rootList []string
 
 func (l *rootList) String() string { return strings.Join(*l, ",") }
 
+func (l *rootList) Type() string { return "string" }
 func (l *rootList) Set(v string) error {
 	*l = append(*l, v)
 	return nil

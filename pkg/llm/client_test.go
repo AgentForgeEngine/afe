@@ -3,8 +3,8 @@ package llm
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
+	"github.com/spf13/pflag"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -30,9 +30,9 @@ func (f *fakePlugin) Schema() map[string]any {
 		"properties": f.schema,
 	}
 }
-func (f *fakePlugin) IsEnabled() bool                { return true }
-func (f *fakePlugin) Init() error                    { return nil }
-func (f *fakePlugin) RegisterFlags(fs *flag.FlagSet) {}
+func (f *fakePlugin) IsEnabled() bool                 { return true }
+func (f *fakePlugin) Init() error                     { return nil }
+func (f *fakePlugin) RegisterFlags(fs *pflag.FlagSet) {}
 func (f *fakePlugin) Execute(ctx context.Context, argsJSON string) (string, error) {
 	f.calls++
 	f.lastArgs = argsJSON
@@ -215,11 +215,11 @@ func TestRunLoopExceedsMaxIterations(t *testing.T) {
 
 func TestNormalizeEndpoint(t *testing.T) {
 	cases := map[string]string{
-		"http://host:1234":                "http://host:1234/chat/completions",
-		"http://host:1234/":               "http://host:1234/chat/completions",
-		"http://host:1234/v1":             "http://host:1234/v1/chat/completions",
-		"http://host:1234/v1/chat":        "http://host:1234/v1/chat/completions",
-		"http://host:1234/v1/chat/":       "http://host:1234/v1/chat/completions",
+		"http://host:1234":                     "http://host:1234/chat/completions",
+		"http://host:1234/":                    "http://host:1234/chat/completions",
+		"http://host:1234/v1":                  "http://host:1234/v1/chat/completions",
+		"http://host:1234/v1/chat":             "http://host:1234/v1/chat/completions",
+		"http://host:1234/v1/chat/":            "http://host:1234/v1/chat/completions",
 		"http://host:1234/v1/chat/completions": "http://host:1234/v1/chat/completions",
 	}
 	for in, want := range cases {

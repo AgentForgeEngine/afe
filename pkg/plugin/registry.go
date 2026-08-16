@@ -1,10 +1,11 @@
 package plugin
 
 import (
-	"flag"
 	"fmt"
 	"sort"
 	"sync"
+
+	"github.com/spf13/pflag"
 )
 
 var (
@@ -32,7 +33,7 @@ func Register(p Plugin) {
 
 // BindFlags iterates over all registered plugins (in deterministic order)
 // and calls their flag registration method against the primary flag set.
-func BindFlags(fs *flag.FlagSet) {
+func BindFlags(fs *pflag.FlagSet) {
 	mu.RLock()
 	defer mu.RUnlock()
 

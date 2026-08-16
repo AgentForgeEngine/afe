@@ -6,7 +6,6 @@ package grep
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +13,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/spf13/pflag"
 
 	"mycli/pkg/plugin"
 )
@@ -48,7 +49,7 @@ func (p *grepPlugin) Name() string { return "grep" }
 
 func (p *grepPlugin) IsEnabled() bool { return p.enabled }
 
-func (p *grepPlugin) RegisterFlags(fs *flag.FlagSet) {
+func (p *grepPlugin) RegisterFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&p.enabled, "grep", false, "enable the grep tool (search file contents)")
 	fs.Var(&p.rootDirs, "grep-root", "directory the grep tool may search (repeatable; default: current directory)")
 }
@@ -356,6 +357,7 @@ type rootList []string
 
 func (l *rootList) String() string { return strings.Join(*l, ",") }
 
+func (l *rootList) Type() string { return "string" }
 func (l *rootList) Set(v string) error {
 	*l = append(*l, v)
 	return nil

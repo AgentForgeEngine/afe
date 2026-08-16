@@ -1,15 +1,33 @@
 // Package config loads afe configuration using viper from
 // ~/.afe/config.yaml, AFE_* environment variables, and CLI flags.
+//
+// It also manages the afe home directory:
+//
+//	~/.afe/            home directory
+//	~/.afe/config.yaml user configuration (optional, created on first run)
+//	~/.afe/afe/        canonical working copy of the afe source tree,
+//	                   used as the build directory when installing
+//	                   remote plugins
+//	~/go/bin/afe       where the rebuilt afe binary is installed
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/viper"
 )
+
+// RepoURL is the canonical afe source repository, cloned into
+// ~/.afe/afe on first run so remote plugin installs always build
+// against a known, clean checkout. It uses the SSH form; if the
+// repository is made public, an HTTPS URL also works (set AFE_REPO_URL
+// or edit the config to override).
+const RepoURL = "git@github.com:AgentForgeEngine/afe.git"
 
 // Config holds application settings. Precedence (highest wins):
 // explicit overrides (CLI flags) > environment (AFE_*) > config file
@@ -28,13 +46,53 @@ type LLMConfig struct {
 
 // PluginConfig holds settings for remote plugin management.
 type PluginConfig struct {
+	// URLs are git URLs, local paths, or "owner/repo" shorthands for
+	// external afe plugins to install.
 	URLs []string `mapstructure:"urls"`
-	Dir  string   `mapstructure:"dir"`
+	// Dir is where downloaded plugin sources are placed, relative to
+	// the working copy in ~/.afe/afe (or absolute).
+	Dir string `mapstructure:"dir"`
+	// Host is the default git host for "owner/repo" shorthand sources.
+	Host string `mapstructure:"host"`
 }
 
-// PluginDir is the default location for downloaded remote plugin
-// sources.
-const PluginDir = "plugins-remote"
+// DefaultPluginDir is the default plugin source directory inside the
+// working copy.
+const DefaultPluginDir = "plugins-remote"
+
+// DefaultHost is the default git host for shorthand sources.
+const DefaultHost = "github.com"
+
+// HomeDir returns the afe home directory (~/.afe), or the path named
+// by the AFE_HOME environment variable when set.
+func HomeDir() (string, error) {
+	if p := os.Getenv("AFE_HOME"); p != "" {
+		return filepath.Abs(p)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".afe"), nil
+}
+
+// RepoDir returns the canonical working copy location, ~/.afe/afe.
+func RepoDir() (string, error) {
+	home, err := HomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "afe"), nil
+}
+
+// BinPath returns the install location of the afe binary, ~/go/bin/afe.
+func BinPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "go", "bin", "afe"), nil
+}
 
 // Load reads configuration. The config file is optional; a missing
 // file is not an error. AFE_CONFIG can point viper at an explicit
@@ -44,8 +102,8 @@ func Load() (*Config, error) {
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
 
-	if home, err := os.UserHomeDir(); err == nil {
-		v.AddConfigPath(filepath.Join(home, ".afe"))
+	if home, err := HomeDir(); err == nil {
+		v.AddConfigPath(home)
 	}
 	if p := os.Getenv("AFE_CONFIG"); p != "" {
 		v.SetConfigFile(p)
@@ -59,7 +117,8 @@ func Load() (*Config, error) {
 
 	v.SetDefault("llm.url", "http://localhost:8080")
 	v.SetDefault("llm.model", "")
-	v.SetDefault("plugin.dir", PluginDir)
+	v.SetDefault("plugin.dir", DefaultPluginDir)
+	v.SetDefault("plugin.host", DefaultHost)
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -73,45 +132,109 @@ func Load() (*Config, error) {
 	}
 
 	if cfg.Plugin.Dir == "" {
-		cfg.Plugin.Dir = PluginDir
+		cfg.Plugin.Dir = DefaultPluginDir
+	}
+	if cfg.Plugin.Host == "" {
+		cfg.Plugin.Host = DefaultHost
 	}
 	return &cfg, nil
 }
 
-// PluginDirPath returns the absolute path of the plugin download
-// directory, resolving a relative dir against the working directory.
-func (c *Config) PluginDirPath() (string, error) {
-	abs, err := filepath.Abs(c.Plugin.Dir)
-	if err != nil {
-		return "", err
+// repoURL returns the clone URL for the afe source repository, honoring
+// the AFE_REPO_URL override.
+func repoURL() string {
+	if p := os.Getenv("AFE_REPO_URL"); p != "" {
+		return p
 	}
-	return abs, nil
+	return RepoURL
 }
 
-// WriteDefaultConfig creates ~/.afe/config.yaml with a commented
-// template if it does not already exist. It returns the path written,
-// or "" if the file already existed.
-func WriteDefaultConfig() (string, error) {
-	home, err := os.UserHomeDir()
+// EnsureHome prepares the afe home directory on first use: it creates
+// ~/.afe, writes a template config.yaml if missing, and clones the afe
+// repository into ~/.afe/afe if that checkout does not exist yet.
+//
+// It returns the list of human-readable actions performed (for
+// display) and is safe to call repeatedly. Cloning requires git on
+// PATH.
+func EnsureHome(ctx context.Context) ([]string, error) {
+	home, err := HomeDir()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	dir := filepath.Join(home, ".afe")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	path := filepath.Join(dir, "config.yaml")
-	if _, err := os.Stat(path); err == nil {
-		return "", nil
+	var actions []string
+
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		return nil, fmt.Errorf("create %s: %w", home, err)
 	}
 
+	path := filepath.Join(home, "config.yaml")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if err := writeTemplate(path); err != nil {
+			return nil, err
+		}
+		actions = append(actions, "wrote "+path)
+	}
+
+	repoDir := filepath.Join(home, "afe")
+	if !dirExists(repoDir) || !exists(filepath.Join(repoDir, ".git")) {
+		if _, err := exec.LookPath("git"); err != nil {
+			return nil, fmt.Errorf("git is required to clone the afe repository into %s, but git was not found on PATH", repoDir)
+		}
+		url := repoURL()
+		cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", url, repoDir)
+		cmd.Stderr = os.Stderr
+		cmd.Stdout = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return nil, fmt.Errorf("clone %s into %s: %w", url, repoDir, err)
+		}
+		actions = append(actions, "cloned "+url+" into "+repoDir)
+	}
+
+	return actions, nil
+}
+
+// PullRepo updates the working copy at dir with a fast-forward pull.
+// A missing or dirty checkout is left alone.
+func PullRepo(ctx context.Context, dir string) error {
+	if !exists(filepath.Join(dir, ".git")) {
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "pull", "--ff-only", "origin", "master")
+	cmd.Dir = dir
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		// Non-fatal: the working copy may have local changes (installed
+		// plugins) that prevent a fast-forward.
+		fmt.Fprintf(os.Stderr, "note: could not fast-forward %s (%v); using existing checkout\n", dir, err)
+	}
+	return nil
+}
+
+func dirExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && info.IsDir()
+}
+
+func fileExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
+}
+
+// exists reports whether the path exists (file or directory).
+func exists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+func writeTemplate(path string) error {
 	content := `# afe configuration file (~/.afe/config.yaml)
 #
 # Precedence: CLI flags > AFE_* environment variables > this file > defaults.
 # Environment variable examples:
 #   AFE_LLM_URL="http://localhost:8080"
 #   AFE_LLM_MODEL="llama3"
-#   AFE_PLUGIN_URLS='["https://github.com/me/afe-plugin-foo.git"]'
+#   AFE_PLUGIN_URLS='["audstanley/afe-plugin-foo"]'
 
 llm:
   # Base URL of the local OpenAI-compatible LLM endpoint
@@ -121,15 +244,15 @@ llm:
   model: "llama3"
 
 plugin:
-  # Git URLs (or local paths) of external afe plugins to download and
-  # install when they are not already compiled into the binary.
+  # External afe plugins to install. Entries may be:
+  #   owner/repo            shorthand, resolved against "host" below
+  #   https://.../repo.git  full git URL (or git@host:owner/repo.git)
+  #   /local/path           existing local checkout
   urls: []
-  # Where downloaded plugin sources are placed (relative to the
-  # working directory or absolute).
+  # Default git host for owner/repo shorthand entries.
+  host: "github.com"
+  # Where downloaded plugin sources live, relative to ~/.afe/afe.
   dir: "plugins-remote"
 `
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		return "", err
-	}
-	return path, nil
+	return os.WriteFile(path, []byte(content), 0o644)
 }

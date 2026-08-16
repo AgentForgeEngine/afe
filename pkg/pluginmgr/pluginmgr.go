@@ -87,27 +87,34 @@ func NameForURL(url string) string {
 	return base
 }
 
-// Install downloads the plugin at url into dir/<name>, rewrites its
-// imports to belong to the afe module, adds a blank import to the
-// remote aggregator in repoRoot, rebuilds the afe binary, and records
-// the installation in the manifest.
+// Install downloads the plugin at source into pluginDir/<name>, where
+// pluginDir is relative to repoRoot (or absolute), rewrites imports to
+// belong to the afe module, adds a blank import to the remote
+// aggregator in repoRoot, rebuilds the afe binary, records the
+// installation in the manifest, and reinstalls the binary to binPath.
 //
-// repoRoot and dir must be absolute paths. It returns the installed
-// package path (e.g. mycli/plugins-remote/foo).
-func Install(ctx context.Context, url, dir, repoRoot string) (string, error) {
-	name := NameForURL(url)
-	dest := filepath.Join(dir, name)
+// It returns the installed package path (e.g. mycli/plugins-remote/foo).
+func Install(ctx context.Context, source, repoRoot, pluginDir, binPath string) (string, error) {
+	if err := CheckGo(); err != nil {
+		return "", err
+	}
+	absPluginDir, err := resolvePluginDir(repoRoot, pluginDir)
+	if err != nil {
+		return "", err
+	}
+	name := NameForURL(source)
+	dest := filepath.Join(absPluginDir, name)
 
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("create plugin dir %q: %w", dir, err)
+	if err := os.MkdirAll(absPluginDir, 0o755); err != nil {
+		return "", fmt.Errorf("create plugin dir %q: %w", absPluginDir, err)
 	}
 
-	modulePath, err := fetch(ctx, url, dest)
+	modulePath, err := fetch(ctx, source, dest)
 	if err != nil {
 		return "", err
 	}
 
-	pkgPath, err := packagePathFor(repoRoot, dir, name)
+	pkgPath, err := packagePathFor(repoRoot, absPluginDir, name)
 	if err != nil {
 		return "", err
 	}
@@ -131,21 +138,82 @@ func Install(ctx context.Context, url, dir, repoRoot string) (string, error) {
 		return "", fmt.Errorf("rebuild afe binary: %w", err)
 	}
 
-	m, err := LoadManifest(dir)
+	if binPath != "" {
+		if err := InstallBinary(ctx, repoRoot, binPath); err != nil {
+			return "", fmt.Errorf("install afe binary: %w", err)
+		}
+	}
+
+	m, err := LoadManifest(absPluginDir)
 	if err != nil {
 		return "", err
 	}
 	m = append(m, Entry{
-		URL:         url,
+		URL:         source,
 		Name:        name,
 		PackagePath: pkgPath,
 		InstalledAt: time.Now(),
 	})
 	m.Sort()
-	if err := m.Save(dir); err != nil {
+	if err := m.Save(absPluginDir); err != nil {
 		return "", fmt.Errorf("save manifest: %w", err)
 	}
 	return pkgPath, nil
+}
+
+func resolvePluginDir(repoRoot, pluginDir string) (string, error) {
+	if filepath.IsAbs(pluginDir) {
+		return pluginDir, nil
+	}
+	return filepath.Join(repoRoot, pluginDir), nil
+}
+
+// ResolveSource expands a plugin source reference to a cloneable
+// location. "owner/repo" shorthands become https://<host>/owner/repo.git;
+// full URLs, git@ URLs, and local paths pass through unchanged.
+func ResolveSource(src, host string) (string, error) {
+	src = strings.TrimSpace(src)
+	if src == "" {
+		return "", fmt.Errorf("empty plugin source")
+	}
+	if strings.Contains(src, "://") || strings.HasPrefix(src, "git@") || strings.HasPrefix(src, "/") || filepath.IsAbs(src) {
+		return src, nil
+	}
+	parts := strings.Split(src, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", fmt.Errorf("plugin source %q must be a URL, a local path, or an owner/repo shorthand", src)
+	}
+	host = strings.TrimRight(host, "/")
+	if host == "" {
+		host = "github.com"
+	}
+	return fmt.Sprintf("https://%s/%s/%s.git", host, parts[0], parts[1]), nil
+}
+
+// CheckGo verifies that the Go toolchain is available and reports a
+// helpful error otherwise.
+func CheckGo() error {
+	if _, err := exec.LookPath("go"); err != nil {
+		return fmt.Errorf("the Go toolchain is required to build and install plugins, but go was not found on PATH. Install Go (https://go.dev/dl) and ensure ~/go/bin (or the go install directory) is set up")
+	}
+	return nil
+}
+
+// InstallBinary copies the freshly built afe binary from repoRoot to
+// binPath, creating the parent directory as needed.
+func InstallBinary(ctx context.Context, repoRoot, binPath string) error {
+	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(binPath), err)
+	}
+	src := filepath.Join(repoRoot, "afe")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("read built binary %q: %w", src, err)
+	}
+	if err := os.WriteFile(binPath, data, 0o755); err != nil {
+		return fmt.Errorf("install binary to %q: %w", binPath, err)
+	}
+	return nil
 }
 
 func (m Manifest) Sort() {
@@ -337,26 +405,6 @@ func Rebuild(ctx context.Context, repoRoot string) error {
 		return err
 	}
 	return nil
-}
-
-// FindRepoRoot walks up from start looking for a directory containing
-// go.mod, returning it as an absolute path. It fails if none is found.
-func FindRepoRoot(start string) (string, error) {
-	absStart, err := filepath.Abs(start)
-	if err != nil {
-		return "", err
-	}
-	dir := absStart
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("no go.mod found above %s; run afe from inside the afe source tree to install plugins", start)
-		}
-		dir = parent
-	}
 }
 
 // ReadChoice reads a single-line choice from stdin, defaulting to

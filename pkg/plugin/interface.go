@@ -2,7 +2,8 @@ package plugin
 
 import (
 	"context"
-	"flag"
+
+	"github.com/spf13/pflag"
 )
 
 // Plugin is the unified interface every tool module must satisfy.
@@ -27,7 +28,7 @@ type Plugin interface {
 	// RegisterFlags attaches the plugin's custom command-line flags to the
 	// given flag set. This runs before flag parsing; it must only bind
 	// flags and perform no I/O.
-	RegisterFlags(fs *flag.FlagSet)
+	RegisterFlags(fs *pflag.FlagSet)
 
 	// IsEnabled reports whether the user explicitly enabled the plugin via
 	// its command-line flags.

@@ -9,11 +9,11 @@ import (
 
 func TestNameForURL(t *testing.T) {
 	cases := map[string]string{
-		"https://github.com/me/my_tool.git":  "my-tool",
-		"https://github.com/me/my_tool":      "my-tool",
-		"/local/path/to/some_plugin":         "some-plugin",
-		"https://example.com/repo.git/":      "repo",
-		"git@github.com:me/cool-plugin.git":  "cool-plugin",
+		"https://github.com/me/my_tool.git": "my-tool",
+		"https://github.com/me/my_tool":     "my-tool",
+		"/local/path/to/some_plugin":        "some-plugin",
+		"https://example.com/repo.git/":     "repo",
+		"git@github.com:me/cool-plugin.git": "cool-plugin",
 	}
 	for in, want := range cases {
 		if got := NameForURL(in); got != want {
@@ -128,26 +128,40 @@ var _ = helper.X
 	}
 }
 
-func TestFindRepoRoot(t *testing.T) {
-	repo := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module mycli\n"), 0o644); err != nil {
-		t.Fatal(err)
+func TestResolveSource(t *testing.T) {
+	cases := []struct {
+		src  string
+		host string
+		want string
+	}{
+		{"audstanley/myplugin", "github.com", "https://github.com/audstanley/myplugin.git"},
+		{"audstanley/myplugin", "", "https://github.com/audstanley/myplugin.git"},
+		{"me/tool", "gitlab.com/", "https://gitlab.com/me/tool.git"},
+		{"https://example.com/me/tool.git", "github.com", "https://example.com/me/tool.git"},
+		{"git@github.com:me/tool.git", "github.com", "git@github.com:me/tool.git"},
 	}
-	deep := filepath.Join(repo, "a", "b")
-	if err := os.MkdirAll(deep, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	got, err := FindRepoRoot(deep)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != repo {
-		t.Errorf("FindRepoRoot = %q, want %q", got, repo)
+	for _, c := range cases {
+		got, err := ResolveSource(c.src, c.host)
+		if err != nil {
+			t.Errorf("ResolveSource(%q) error: %v", c.src, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("ResolveSource(%q, %q) = %q, want %q", c.src, c.host, got, c.want)
+		}
 	}
 
-	empty := t.TempDir()
-	if _, err := FindRepoRoot(empty); err == nil {
-		t.Error("expected error when no go.mod found")
+	if _, err := ResolveSource("badshorthand", "github.com"); err == nil {
+		t.Error("expected error for malformed shorthand")
+	}
+	if _, err := ResolveSource("a/b/c", "github.com"); err == nil {
+		t.Error("expected error for owner/repo with extra segment")
+	}
+}
+
+func TestCheckGo(t *testing.T) {
+	if err := CheckGo(); err != nil {
+		t.Skipf("go not on PATH in test env: %v", err)
 	}
 }
 

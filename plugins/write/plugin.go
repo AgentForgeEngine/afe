@@ -5,11 +5,12 @@ package write
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/spf13/pflag"
 
 	"mycli/pkg/plugin"
 )
@@ -35,7 +36,7 @@ func (p *writePlugin) Name() string { return "write" }
 
 func (p *writePlugin) IsEnabled() bool { return p.enabled }
 
-func (p *writePlugin) RegisterFlags(fs *flag.FlagSet) {
+func (p *writePlugin) RegisterFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&p.enabled, "write", false, "enable the write tool (create or overwrite files)")
 	fs.Var(&p.rootDirs, "write-root", "directory the write tool may write into (repeatable; default: current directory)")
 }
@@ -144,6 +145,7 @@ type rootList []string
 
 func (l *rootList) String() string { return strings.Join(*l, ",") }
 
+func (l *rootList) Type() string { return "string" }
 func (l *rootList) Set(v string) error {
 	*l = append(*l, v)
 	return nil

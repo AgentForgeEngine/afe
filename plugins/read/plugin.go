@@ -5,11 +5,12 @@ package read
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/spf13/pflag"
 
 	"mycli/pkg/plugin"
 )
@@ -41,7 +42,7 @@ func (p *readPlugin) Name() string { return "read" }
 
 func (p *readPlugin) IsEnabled() bool { return p.enabled }
 
-func (p *readPlugin) RegisterFlags(fs *flag.FlagSet) {
+func (p *readPlugin) RegisterFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&p.enabled, "read", false, "enable the read tool (read file contents)")
 	fs.Var(&p.rootDirs, "read-root", "directory the read tool may access (repeatable; default: current directory)")
 }
@@ -159,6 +160,7 @@ type rootList []string
 
 func (l *rootList) String() string { return strings.Join(*l, ",") }
 
+func (l *rootList) Type() string { return "string" }
 func (l *rootList) Set(v string) error {
 	*l = append(*l, v)
 	return nil

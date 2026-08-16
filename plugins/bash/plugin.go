@@ -5,13 +5,14 @@ package bash
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/spf13/pflag"
 
 	"mycli/pkg/plugin"
 )
@@ -39,7 +40,7 @@ func (p *bashPlugin) Name() string { return "bash" }
 
 func (p *bashPlugin) IsEnabled() bool { return p.enabled }
 
-func (p *bashPlugin) RegisterFlags(fs *flag.FlagSet) {
+func (p *bashPlugin) RegisterFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&p.enabled, "bash", false, "enable the bash tool (execute shell commands)")
 	fs.Var(&p.allowDirs, "bash-allow-dir", "restrict the bash tool to this working directory (repeatable)")
 }
@@ -183,3 +184,5 @@ func (l *allowDirList) Set(v string) error {
 	*l = append(*l, v)
 	return nil
 }
+
+func (l *allowDirList) Type() string { return "string" }

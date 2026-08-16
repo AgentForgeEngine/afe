@@ -5,13 +5,14 @@ package glob
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/spf13/pflag"
 
 	"mycli/pkg/plugin"
 )
@@ -39,7 +40,7 @@ func (p *globPlugin) Name() string { return "glob" }
 
 func (p *globPlugin) IsEnabled() bool { return p.enabled }
 
-func (p *globPlugin) RegisterFlags(fs *flag.FlagSet) {
+func (p *globPlugin) RegisterFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&p.enabled, "glob", false, "enable the glob tool (find files by name pattern)")
 	fs.Var(&p.rootDirs, "glob-root", "directory the glob tool may search (repeatable; default: current directory)")
 }
@@ -226,6 +227,7 @@ type rootList []string
 
 func (l *rootList) String() string { return strings.Join(*l, ",") }
 
+func (l *rootList) Type() string { return "string" }
 func (l *rootList) Set(v string) error {
 	*l = append(*l, v)
 	return nil
