@@ -193,6 +193,15 @@ The current process then exits; run afe again to use the new plugins.`,
 				return err
 			}
 
+			pluginDir := c.Plugin.Dir
+			if !filepath.IsAbs(pluginDir) {
+				pluginDir = filepath.Join(repoRoot, pluginDir)
+			}
+			manifest, err := pluginmgr.LoadManifest(pluginDir)
+			if err != nil {
+				return fmt.Errorf("read plugin manifest: %w", err)
+			}
+
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			defer cancel()
 
@@ -204,7 +213,12 @@ The current process then exits; run afe again to use the new plugins.`,
 				h = c.Plugin.Host
 			}
 
+			installedAny := false
 			for _, src := range sources {
+				if manifest.IsInstalled(src) {
+					fmt.Fprintf(os.Stderr, "Already installed, skipping: %s\n", src)
+					continue
+				}
 				resolved, err := pluginmgr.ResolveSource(src, h)
 				if err != nil {
 					return err
@@ -215,6 +229,12 @@ The current process then exits; run afe again to use the new plugins.`,
 					return fmt.Errorf("install %q: %w", src, err)
 				}
 				fmt.Fprintf(os.Stderr, "Installed %s (package %s).\n", src, pkgPath)
+				installedAny = true
+			}
+
+			if !installedAny {
+				fmt.Fprintln(os.Stderr, "Nothing to install.")
+				return nil
 			}
 
 			fmt.Fprintf(os.Stderr, "\nNew binary installed to %s.\n", binPath)
